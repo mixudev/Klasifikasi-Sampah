@@ -1,21 +1,23 @@
 """
 model_loader.py — Manajemen pemuatan model dari HuggingFace Hub.
 
-Model diunduh otomatis dari repository publik HuggingFace menggunakan library
-`transformers`, kemudian di-cache oleh Streamlit (@st.cache_resource) sehingga
-download hanya terjadi SEKALI per sesi — tidak berulang saat pengguna berpindah halaman.
+Model diunduh dari repository publik HF menggunakan library `transformers`,
+kemudian di-cache oleh Streamlit sehingga download hanya terjadi SEKALI per sesi.
 
 Strategi fallback 3-tier:
   1. Model utama (dipilih pengguna di Pengaturan)
   2. Model khusus sampah ringan: Sintong/TrashNetResNet18 (~45MB)
-  3. Model generik ViT: google/vit-base-patch16-224 (~350MB)
+  3. Model generik ViT: google/vit-base-patch16-224
+
+Jika semua gagal, predictor akan otomatis beralih ke Gemini sebagai fallback.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+import socket
+from typing import Optional, Tuple
 
 import streamlit as st
 from transformers import pipeline
@@ -26,109 +28,141 @@ logger = logging.getLogger(__name__)
 
 # ─── Konstanta ────────────────────────────────────────────────────────────────
 
-# Model fallback yang lebih ringan (~45MB) jika model utama gagal
-_FALLBACK_MODEL_ID = "Sintong/TrashNetResNet18"
+_FALLBACK_MODEL_ID = "Sintong/TrashNetResNet18"  # Model ringan ~45MB sebagai fallback
+
+# Set timeout SEBELUM transformers digunakan (diperlukan di Streamlit Cloud)
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")  # Pastikan download diizinkan
 
 
-# ─── Helper ───────────────────────────────────────────────────────────────────
+# ─── Connectivity Check ───────────────────────────────────────────────────────
 
-def get_hf_cache_dir() -> str:
-    """Kembalikan direktori cache HuggingFace yang aktif."""
-    return os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
-
-
-def _try_load(model_id: str) -> Optional[pipeline]:
+def _check_hf_connectivity(timeout: int = 8) -> Tuple[bool, str]:
     """
-    Upaya tunggal memuat model tanpa fallback.
-    Mengembalikan pipeline jika berhasil, None jika gagal.
+    Cek apakah HuggingFace dapat dijangkau via TCP sebelum mencoba download model.
+
+    Returns:
+        (is_reachable, error_message)
+    """
+    try:
+        sock = socket.create_connection(("huggingface.co", 443), timeout=timeout)
+        sock.close()
+        return True, ""
+    except socket.timeout:
+        return False, "Koneksi ke huggingface.co timeout (>8 detik)"
+    except socket.gaierror as e:
+        return False, f"DNS gagal me-resolve 'huggingface.co': {e}"
+    except OSError as e:
+        return False, f"Koneksi gagal: {e}"
+
+
+# ─── Model Loader ─────────────────────────────────────────────────────────────
+
+def _try_load_pipeline(model_id: str) -> Tuple[Optional[pipeline], str]:
+    """
+    Satu upaya memuat model pipeline. Mengembalikan (pipeline, error_str).
+    Jika berhasil: (pipeline_object, "").
+    Jika gagal:    (None, "pesan error aktual").
     """
     try:
         clf = pipeline(
             task="image-classification",
             model=model_id,
-            device=-1,      # CPU only — aman di semua environment termasuk Streamlit Cloud
-            top_k=None,     # Kembalikan seluruh skor kelas
-            local_files_only=False,  # Izinkan download dari Hub jika belum ada di cache
+            device=-1,           # CPU only — aman di semua environment
+            top_k=None,          # Kembalikan seluruh skor kelas
+            local_files_only=False,
         )
-        logger.info(f"[ModelLoader] ✅ Berhasil memuat: {model_id}")
-        return clf
+        logger.info(f"[ModelLoader] ✅ Berhasil: {model_id}")
+        return clf, ""
     except Exception as exc:
-        logger.warning(f"[ModelLoader] ⚠️  Gagal memuat '{model_id}': {type(exc).__name__}: {exc}")
-        return None
+        err = f"{type(exc).__name__}: {exc}"
+        logger.warning(f"[ModelLoader] ⚠️  Gagal '{model_id}': {err}")
+        return None, err
 
 
-# ─── Fungsi Utama ─────────────────────────────────────────────────────────────
-
-@st.cache_resource(show_spinner="⏳ Mengunduh model AI dari Hugging Face Hub (hanya pertama kali)...")
+@st.cache_resource(show_spinner="⏳ Mengunduh model AI dari Hugging Face Hub...")
 def load_model_from_hub(model_id: str = WASTE_MODEL_ID) -> Optional[pipeline]:
     """
     Muat model image-classification dari HuggingFace Hub.
 
-    Model diunduh secara otomatis dari repository publik HF dan di-cache
-    menggunakan @st.cache_resource. Download hanya terjadi sekali per sesi —
-    saat app restart, download ulang diperlukan jika cache hilang.
-
-    Strategi fallback otomatis:
-      1. Coba model yang diminta (model_id)
-      2. Coba model khusus sampah ringan (TrashNetResNet18)
-      3. Coba model generik ViT Google
+    Alur eksekusi:
+      1. Uji konektivitas ke huggingface.co
+      2. Coba model yang diminta (model_id)
+      3. Fallback ke TrashNetResNet18 (lebih ringan)
+      4. Fallback ke google/vit-base-patch16-224 (generik)
+      5. Jika semua gagal → return None (predictor akan beralih ke Gemini)
 
     Args:
         model_id: ID model di HuggingFace Hub (format: 'username/repo-name').
-                  Gunakan model publik agar dapat diakses tanpa token.
 
     Returns:
-        HuggingFace pipeline siap pakai untuk image-classification,
-        atau None jika semua upaya gagal (kemungkinan tidak ada koneksi internet).
+        HuggingFace pipeline siap pakai, atau None jika semua upaya gagal.
     """
-    # Perpanjang timeout untuk download model besar di lingkungan cloud
-    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")  # 10 menit
+    logger.info(f"[ModelLoader] Memulai pemuatan: {model_id}")
 
-    logger.info(f"[ModelLoader] Memulai pemuatan model: {model_id}")
-    logger.info(f"[ModelLoader] Cache directory: {get_hf_cache_dir()}")
+    # ── Langkah 1: Cek konektivitas ke HuggingFace ───────────────────────────
+    is_reachable, conn_err = _check_hf_connectivity()
+    if not is_reachable:
+        logger.error(f"[ModelLoader] ❌ HuggingFace tidak terjangkau: {conn_err}")
+        st.error(
+            "❌ **HuggingFace Tidak Dapat Dijangkau**\n\n"
+            f"**Detail error:** `{conn_err}`\n\n"
+            "Kemungkinan penyebab di Streamlit Cloud:\n"
+            "- Pembatasan jaringan pada deployment ini\n"
+            "- Gangguan sementara pada server HuggingFace\n\n"
+            "⚡ **Solusi cepat:** Beralih ke mode **Google Gemini** di halaman Pengaturan "
+            "(tidak memerlukan download model dan tidak bergantung pada HuggingFace)."
+        )
+        return None
 
-    # ── Upaya 1: Model yang diminta ──────────────────────────────────────────
-    clf = _try_load(model_id)
+    logger.info("[ModelLoader] ✅ HuggingFace terjangkau. Memulai download...")
+    last_error = ""
+
+    # ── Langkah 2: Coba model yang diminta ───────────────────────────────────
+    clf, err = _try_load_pipeline(model_id)
     if clf is not None:
         return clf
+    last_error = err
 
-    # ── Upaya 2: Model khusus sampah (lebih ringan) ──────────────────────────
+    # ── Langkah 3: Fallback ke model ringan ──────────────────────────────────
     if model_id != _FALLBACK_MODEL_ID:
-        logger.info(f"[ModelLoader] 🔄 Mencoba fallback ringan: {_FALLBACK_MODEL_ID}")
-        clf = _try_load(_FALLBACK_MODEL_ID)
+        logger.info(f"[ModelLoader] 🔄 Fallback ke model ringan: {_FALLBACK_MODEL_ID}")
+        clf, err = _try_load_pipeline(_FALLBACK_MODEL_ID)
         if clf is not None:
             st.warning(
-                f"⚠️ Model **{model_id}** tidak dapat dimuat. "
+                f"⚠️ Model `{model_id}` gagal dimuat. "
                 f"Menggunakan model alternatif: `{_FALLBACK_MODEL_ID}`"
             )
             return clf
+        last_error = err
 
-    # ── Upaya 3: Model generik ViT Google ───────────────────────────────────
-    if model_id != HF_MODEL_ID:
-        logger.info(f"[ModelLoader] 🔄 Mencoba model generik: {HF_MODEL_ID}")
-        clf = _try_load(HF_MODEL_ID)
+    # ── Langkah 4: Fallback ke model generik ─────────────────────────────────
+    if model_id != HF_MODEL_ID and _FALLBACK_MODEL_ID != HF_MODEL_ID:
+        logger.info(f"[ModelLoader] 🔄 Fallback terakhir: {HF_MODEL_ID}")
+        clf, err = _try_load_pipeline(HF_MODEL_ID)
         if clf is not None:
             st.warning(
                 f"⚠️ Model utama tidak tersedia. "
                 f"Menggunakan model generik: `{HF_MODEL_ID}`"
             )
             return clf
+        last_error = err
 
-    # ── Semua upaya gagal ────────────────────────────────────────────────────
-    logger.error("[ModelLoader] ❌ Semua upaya pemuatan model gagal.")
+    # ── Semua upaya gagal ─────────────────────────────────────────────────────
+    logger.error(f"[ModelLoader] ❌ Semua upaya gagal. Error terakhir: {last_error}")
     st.error(
-        "❌ **Tidak Dapat Memuat Model dari Hugging Face Hub**\n\n"
-        "**Kemungkinan penyebab:**\n"
-        "- Tidak ada koneksi internet\n"
-        "- Model ID tidak valid atau repositori bersifat privat\n"
-        "- Server HuggingFace sedang dalam gangguan\n\n"
-        "**Solusi:**\n"
-        "✅ Periksa koneksi internet Anda\n"
-        "✅ Verifikasi Model ID di `huggingface.co/<username>/<repo>`\n"
-        "✅ Atau beralih ke mode **Google Gemini** di halaman Pengaturan"
+        "❌ **Gagal Memuat Model dari HuggingFace Hub**\n\n"
+        f"**Error teknis:** `{last_error}`\n\n"
+        "**Yang sudah dicoba:**\n"
+        f"- `{model_id}`\n"
+        f"- `{_FALLBACK_MODEL_ID}` (fallback ringan)\n"
+        f"- `{HF_MODEL_ID}` (fallback generik)\n\n"
+        "⚡ Aplikasi akan otomatis beralih ke **Google Gemini** untuk prediksi ini."
     )
     return None
 
+
+# ─── Cache Management ─────────────────────────────────────────────────────────
 
 def clear_model_cache() -> None:
     """Bersihkan cache resource model agar dapat dimuat ulang saat diperlukan."""

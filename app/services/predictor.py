@@ -360,8 +360,30 @@ def predict(
         api_key = cfg.GEMINI_API_KEY or get_setting("gemini_api_key") or ""
         return _predict_gemini(image, api_key, threshold)
 
-    # Default: mode "hugging"
-    return _predict_hugging(image, model_id, threshold)
+    # Mode "hugging" — coba HuggingFace Hub
+    result = _predict_hugging(image, model_id, threshold)
+
+    # ── Auto-fallback ke Gemini jika HF Hub gagal ─────────────────────────────
+    # Berguna ketika HuggingFace tidak dapat diakses di Streamlit Cloud
+    if result.error:
+        import importlib
+        import app.config as cfg
+        importlib.reload(cfg)
+        api_key = cfg.GEMINI_API_KEY or get_setting("gemini_api_key") or ""
+        if api_key and api_key.strip():
+            logger.warning(
+                f"[Predict] HF Hub gagal: {result.error[:80]}. "
+                "Auto-fallback ke Google Gemini..."
+            )
+            gemini_result = _predict_gemini(image, api_key, threshold)
+            if not gemini_result.error:
+                # Berhasil via Gemini — kembalikan hasilnya
+                # Source tetap "G" sehingga UI dapat menampilkan badge yang tepat
+                return gemini_result
+            # Gemini juga gagal — kembalikan error HF (lebih deskriptif)
+            logger.error("[Predict] Gemini fallback juga gagal.")
+
+    return result
 
 
 def predict_batch(

@@ -95,9 +95,12 @@ def render() -> None:
         st.info(
             f"ℹ️ **Mode HuggingFace Hub** aktif.\n\n"
             f"Model saat ini: `{model_id}`\n\n"
-            "Model diunduh otomatis dari HuggingFace saat pertama kali digunakan, "
-            "kemudian di-cache. Inferensi berjalan sepenuhnya di server — "
-            "tidak ada batas kuota penggunaan."
+            "Model diunduh otomatis dari HuggingFace saat pertama digunakan, "
+            "kemudian di-cache selama sesi berlangsung. Inferensi berjalan di server — "
+            "tidak ada batas kuota.\n\n"
+            "🔄 **Auto-fallback:** Jika HuggingFace tidak dapat dijangkau "
+            "(contoh: pembatasan jaringan di cloud), sistem akan otomatis beralih "
+            "ke Google Gemini menggunakan API Key yang sudah dikonfigurasi."
         )
     else:
         current_key = get_setting("gemini_api_key") or ""
