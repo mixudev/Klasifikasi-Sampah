@@ -48,7 +48,7 @@ def render() -> None:
     else:
         mode_options = {
             "Lokal (Offline - Mengunduh Model 343MB ke Komputer Anda)": "local",
-            "Cloud (Hugging Face API - Tanpa Download Model, Ringan)": "cloud",
+            "Hugging Face Hub (Download Model Publik - Cache Otomatis Setelah Download Pertama)": "cloud",
             "Google Gemini AI (Multimodal - Instan, Sangat Cerdas & Presisi Tinggi)": "gemini"
         }
 
@@ -67,19 +67,14 @@ def render() -> None:
     # Tampilkan kolom Token / Key tergantung mode
     if new_mode == "cloud" and not IS_STREAMLIT_CLOUD:
         st.info(
-            "Info: Mode Cloud berjalan secara instan tanpa mengunduh model. "
-            "Sangat disarankan memasukkan Hugging Face Access Token Anda untuk menghindari pembatasan rate limit."
+            "ℹ️ **Mode Hugging Face Hub**: Model diunduh langsung dari repositori publik Hugging Face "
+            "menggunakan library `transformers`. Download hanya terjadi sekali, setelah itu model "
+            "akan di-cache di komputer Anda dan bisa digunakan offline.\n\n"
+            "Pastikan koneksi internet tersedia untuk download pertama kali (~300-400 MB)."
         )
-        current_token = get_setting("hf_token")
-        new_token = st.text_input(
-            "Hugging Face User Access Token (Opsional)",
-            value=current_token,
-            type="password",
-            help="Dapatkan token gratis Anda di: huggingface.co/settings/tokens"
-        )
-        if new_token != current_token:
-            update_setting("hf_token", new_token.strip())
-            st.success("Hugging Face API Token diperbarui.")
+        current_model_hf = get_setting("model_id")
+        st.markdown(f"**Model aktif:** `{current_model_hf}`")
+        st.caption("Ubah model di bagian 'Parameter Analisis AI' di bawah.")
 
     elif new_mode == "gemini":
         st.info(

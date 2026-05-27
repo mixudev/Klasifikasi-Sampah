@@ -1,9 +1,9 @@
 """
 predictor.py — Menjalankan inferensi model dan mengembalikan prediksi terstruktur.
 Mendukung tiga mode:
-1. Lokal (Offline) -> Kode (L)
-2. Hugging Face Serverless Cloud API -> Kode (H)
-3. Google Gemini Multimodal AI -> Kode (G)
+1. Lokal (Offline) -> Kode (L) — model sudah ada di cache lokal
+2. Hugging Face Hub -> Kode (H) — download model dari repo HF publik, cache otomatis
+3. Google Gemini Multimodal AI -> Kode (G) — via Google Generative AI API
 """
 
 from PIL import Image, ImageEnhance
@@ -11,11 +11,10 @@ from dataclasses import dataclass
 from typing import Optional
 import logging
 import requests
-import io
 import json
 import numpy as np
 
-from app.services.model_loader import load_model
+from app.services.model_loader import load_model, load_model_from_hub
 from app.services.preprocessing import preprocess_image, validate_image
 from app.config import DEFAULT_CONFIDENCE_THRESHOLD, WASTE_CLASSES, HANDLING_TIPS, CLASS_COLORS
 from app.utils.cache import get_setting
@@ -70,86 +69,6 @@ def _map_label_to_class(raw_label: str) -> str:
 
     return raw_label  # kembalikan apa adanya jika tidak dikenali
 
-
-def _predict_cloud(image: Image.Image, model_id: str, hf_token: str, threshold: float) -> PredictionResult:
-    """Melakukan inferensi menggunakan Hugging Face Serverless Inference API -> Kode (H)."""
-    try:
-        # Convert PIL Image ke bytes JPEG
-        img_bytes = pil_to_bytes(image, fmt="JPEG")
-
-        api_url = f"https://api-inference.huggingface.co/models/{model_id}"
-        headers = {}
-        if hf_token and hf_token.strip():
-            headers["Authorization"] = f"Bearer {hf_token.strip()}"
-
-        logger.info(f"Querying HF Cloud API for model: {model_id}")
-        response = requests.post(api_url, headers=headers, data=img_bytes, timeout=15)
-
-        # Cek jika serverless model sedang dimuat (cold start)
-        if response.status_code == 503:
-            res_json = response.json()
-            est_time = res_json.get("estimated_time", 20.0)
-            return PredictionResult(
-                label="Error", confidence=0.0,
-                color="#DC2626", tip="", all_scores=[],
-                is_confident=False, source="H",
-                error=f"Model sedang dibangunkan di server Hugging Face (cold start). Silakan coba lagi dalam {est_time:.0f} detik."
-            )
-
-        if response.status_code != 200:
-            try:
-                err_msg = response.json().get("error", f"HTTP Error {response.status_code}")
-            except Exception:
-                err_msg = response.text[:100]
-            return PredictionResult(
-                label="Error", confidence=0.0,
-                color="#DC2626", tip="", all_scores=[],
-                is_confident=False, source="H",
-                error=f"Gagal memanggil HF Cloud API: {err_msg}"
-            )
-
-        raw_results = response.json()
-        
-        if not isinstance(raw_results, list) or not raw_results:
-            return PredictionResult(
-                label="Error", confidence=0.0,
-                color="#DC2626", tip="", all_scores=[],
-                is_confident=False, source="H",
-                error="Hugging Face API mengembalikan format respons yang tidak valid."
-            )
-
-        # Ambil prediksi terbaik
-        top = max(raw_results, key=lambda x: x["score"])
-        label = _map_label_to_class(top["label"])
-        confidence = float(top["score"])
-
-        return PredictionResult(
-            label=label,
-            confidence=confidence,
-            color=CLASS_COLORS.get(label, "#475569"),
-            tip=HANDLING_TIPS.get(label, "Buang ke tempat sampah yang sesuai."),
-            all_scores=[
-                {"label": _map_label_to_class(r["label"]), "score": float(r["score"])}
-                for r in raw_results
-            ],
-            is_confident=confidence >= threshold,
-            source="H",
-        )
-
-    except requests.exceptions.Timeout:
-        return PredictionResult(
-            label="Error", confidence=0.0,
-            color="#DC2626", tip="", all_scores=[],
-            is_confident=False, source="H",
-            error="Koneksi ke Hugging Face API mengalami timeout (waktu habis)."
-        )
-    except Exception as exc:
-        logger.error(f"Cloud prediction failed: {exc}")
-        return PredictionResult(
-            label="Error", confidence=0.0,
-            color="#DC2626", tip="", all_scores=[],
-            is_confident=False, source="H", error=f"Inferensi Cloud gagal: {str(exc)}"
-        )
 
 
 def _predict_gemini(image: Image.Image, api_key: str, threshold: float) -> PredictionResult:
@@ -309,10 +228,41 @@ def predict(image: Image.Image, threshold: float = DEFAULT_CONFIDENCE_THRESHOLD)
         gemini_key = config.GEMINI_API_KEY if config.GEMINI_API_KEY else get_setting("gemini_api_key")
         return _predict_gemini(image, gemini_key, threshold)
 
-    # Mode 2: Cloud Inference (Hugging Face API) -> Kode (H)
+    # Mode 2: HF Hub Inference (Download model dari HuggingFace Hub) -> Kode (H)
     if inference_mode == "cloud":
-        hf_token = get_setting("hf_token")
-        return _predict_cloud(image, model_id, hf_token, threshold)
+        model = load_model_from_hub(model_id)
+        if model is None:
+            return PredictionResult(
+                label="Error", confidence=0.0,
+                color="#DC2626", tip="", all_scores=[],
+                is_confident=False, source="H",
+                error="Model tidak dapat dimuat dari Hugging Face Hub. Periksa koneksi internet atau ganti ke mode Gemini.",
+            )
+        try:
+            processed = preprocess_image(image)
+            raw_results: list[dict] = model(processed)
+            top = max(raw_results, key=lambda x: x["score"])
+            label = _map_label_to_class(top["label"])
+            confidence = float(top["score"])
+            return PredictionResult(
+                label=label,
+                confidence=confidence,
+                color=CLASS_COLORS.get(label, "#475569"),
+                tip=HANDLING_TIPS.get(label, "Buang ke tempat sampah yang sesuai."),
+                all_scores=[
+                    {"label": _map_label_to_class(r["label"]), "score": float(r["score"])}
+                    for r in raw_results
+                ],
+                is_confident=confidence >= threshold,
+                source="H",
+            )
+        except Exception as exc:
+            logger.error(f"Prediksi HF Hub gagal: {exc}")
+            return PredictionResult(
+                label="Error", confidence=0.0,
+                color="#DC2626", tip="", all_scores=[],
+                is_confident=False, source="H", error=str(exc),
+            )
 
     # Mode 1: Local Inference (Offline) -> Kode (L)
     model = load_model(model_id)

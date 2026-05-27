@@ -1,15 +1,14 @@
 """
 model_loader.py — Memuat model dari HuggingFace dengan cache Streamlit.
-Model TIDAK disimpan di repo; diunduh otomatis saat pertama kali dijalankan.
-Optimized untuk Streamlit Cloud dengan retry logic & fallback mechanisms.
+Mendukung dua mode:
+  1. load_model()          — Mode Lokal/Offline (local_files_only=True, model harus sudah ada di cache)
+  2. load_model_from_hub() — Mode HF Hub (download otomatis dari HuggingFace, cached setelah unduhan pertama)
 """
 
 from __future__ import annotations
 from typing import Optional
 import os
 import time
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 import streamlit as st
 from transformers import pipeline
@@ -18,117 +17,110 @@ from app.config import WASTE_MODEL_ID, HF_MODEL_ID
 
 logger = logging.getLogger(__name__)
 
-# Detect if running on Streamlit Cloud
-def is_streamlit_cloud() -> bool:
-    """Check if running on Streamlit Cloud."""
-    return (
-        "STREAMLIT_SERVER_HEADLESS" in os.environ or
-        os.path.exists(os.path.expanduser("~/.streamlit")) or
-        "streamlit" in os.environ.get("HOSTNAME", "").lower()
-    )
-
-IS_STREAMLIT_CLOUD = is_streamlit_cloud()
-LOCAL_FILES_ONLY = not IS_STREAMLIT_CLOUD
-
-# Progress tracking untuk long-running loads
-_model_loading_progress = {}
 
 def get_cache_dir():
     """Get HuggingFace cache directory."""
     return os.path.expanduser("~/.cache/huggingface")
 
-@st.cache_resource(show_spinner="📥 Downloading model AI (first time only)...")
+@st.cache_resource(show_spinner="📥 Memuat model lokal (mode offline)...")
 def load_model(model_id: str = WASTE_MODEL_ID) -> Optional[pipeline]:
     """
-    Load image-classification pipeline dari HuggingFace dengan retry logic.
+    Mode Lokal/Offline: Load model dari cache lokal saja (local_files_only=True).
+    Model harus sudah ada di cache HuggingFace (~/.cache/huggingface).
+    Jalankan `python download_model.py` terlebih dahulu untuk men-download model.
     
     Args:
         model_id: ID model di HuggingFace Hub.
     Returns:
-        HuggingFace pipeline object, atau None jika gagal.
+        HuggingFace pipeline object, atau None jika model belum ada di cache lokal.
     """
     try:
-        logger.info(f"🚀 Loading model: {model_id}")
-        logger.info(f"   Environment: {'Streamlit Cloud' if IS_STREAMLIT_CLOUD else 'Local'}")
-        logger.info(f"   Local files only: {LOCAL_FILES_ONLY}")
+        logger.info(f"🚀 [Mode Lokal] Loading model dari cache: {model_id}")
         logger.info(f"   Cache dir: {get_cache_dir()}")
-        
-        # Set longer timeout untuk Streamlit Cloud
-        os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "600"  # 10 menit timeout
         
         classifier = pipeline(
             task="image-classification",
             model=model_id,
             device=-1,  # CPU-only
             top_k=None,
-            local_files_only=LOCAL_FILES_ONLY,
+            local_files_only=True,  # HANYA dari cache lokal, tidak download
         )
-        logger.info("✅ Model loaded successfully!")
+        logger.info("✅ Model lokal berhasil dimuat!")
         return classifier
 
     except Exception as exc:
         error_msg = str(exc)
-        logger.error(f"❌ Failed to load model '{model_id}': {exc}")
-        
-        # Jika error karena network/timeout di cloud, retry dengan delay
-        if IS_STREAMLIT_CLOUD and ("HTTPSConnectionPool" in error_msg or 
-                                    "NameResolutionError" in error_msg or 
-                                    "timeout" in error_msg.lower()):
-            logger.warning("⏳ Network error on Streamlit Cloud - retrying in 5 seconds...")
-            time.sleep(5)
-            
-            try:
-                logger.info(f"🔄 RETRY: Loading model {model_id}")
-                classifier = pipeline(
-                    task="image-classification",
-                    model=model_id,
-                    device=-1,
-                    top_k=None,
-                    local_files_only=False,  # Force download on retry
-                )
-                logger.info("✅ Model loaded on retry!")
-                return classifier
-            except Exception as retry_exc:
-                logger.error(f"❌ Retry also failed: {retry_exc}")
-        
-        # Fallback ke model generic jika specific model gagal
-        if model_id != HF_MODEL_ID:
-            logger.warning(f"⚠️ Fallback ke model generic: {HF_MODEL_ID}")
-            st.warning(
-                f"⚠️ Model **{model_id}** tidak tersedia.\n\n"
-                "Menggunakan model generic untuk prediksi..."
-            )
-            return load_model(HF_MODEL_ID)
-        
-        # Final error message untuk user
-        if IS_STREAMLIT_CLOUD:
-            st.error(
-                "❌ **Model Loading Failed di Cloud**\n\n"
-                "**Penyebab Umum:**\n"
-                "1. First deployment - model sedang di-download (~10 menit)\n"
-                "2. Network timeout - HuggingFace API sedang slow\n"
-                "3. Memory insufficient - model terlalu besar\n\n"
-                "**Solusi:**\n"
-                "✅ Tunggu 10-15 menit untuk first run\n"
-                "✅ Refresh halaman & coba lagi\n"
-                "✅ Atau gunakan **Google Gemini** di Pengaturan\n\n"
-                f"**Debug Info:** `{error_msg[:100]}...`"
-            )
-        else:
-            st.error(
-                "❌ **Model Tidak Ditemukan**\n\n"
-                "Jalankan: `python download_model.py` untuk download offline.\n\n"
-                f"Error: {error_msg}"
-            )
-        
+        logger.error(f"❌ Gagal memuat model lokal '{model_id}': {exc}")
+        st.error(
+            "❌ **Model Lokal Tidak Ditemukan**\n\n"
+            "Model belum di-download ke komputer Anda. Pilihan solusi:\n"
+            "- Jalankan `python download_model.py` untuk download offline\n"
+            "- Atau ganti ke **Mode HF Hub** di Pengaturan (download otomatis saat pertama kali)\n"
+            "- Atau gunakan **Google Gemini** (tidak perlu download model)\n\n"
+            f"Error: `{error_msg[:150]}`"
+        )
         return None
+
+
+@st.cache_resource(show_spinner="📥 Mengunduh model dari Hugging Face Hub (hanya sekali)...")
+def load_model_from_hub(model_id: str = WASTE_MODEL_ID) -> Optional[pipeline]:
+    """
+    Mode HF Hub: Download model langsung dari HuggingFace Hub menggunakan `transformers`.
+    Model akan di-cache secara otomatis setelah download pertama.
+    Mendukung model publik dari username/repo_name tanpa memerlukan API serverless.
+    
+    Args:
+        model_id: ID model di HuggingFace Hub (contoh: 'wayfarer130/garbage-classification-vit').
+    Returns:
+        HuggingFace pipeline object, atau None jika gagal.
+    """
+    try:
+        logger.info(f"🚀 [Mode HF Hub] Mengunduh/loading model: {model_id}")
+        logger.info(f"   Cache dir: {get_cache_dir()}")
+        
+        # Set timeout yang lebih panjang untuk download model
+        os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "600"  # 10 menit
+        
+        classifier = pipeline(
+            task="image-classification",
+            model=model_id,
+            device=-1,   # CPU-only
+            top_k=None,
+            local_files_only=False,  # Izinkan download dari Hub
+        )
+        logger.info("✅ Model dari HF Hub berhasil dimuat!")
         return classifier
 
     except Exception as exc:
         error_msg = str(exc)
-        logger.error(f"❌ Gagal memuat model '{model_id}': {exc}")
+        logger.error(f"❌ Gagal mengunduh model dari HF Hub '{model_id}': {exc}")
+        
+        # Coba fallback ke model generik jika model spesifik gagal
+        if model_id != HF_MODEL_ID:
+            logger.warning(f"⚠️ Fallback ke model generik: {HF_MODEL_ID}")
+            st.warning(
+                f"⚠️ Model **{model_id}** tidak dapat dimuat.\n\n"
+                f"Mencoba model alternatif: `{HF_MODEL_ID}`..."
+            )
+            return load_model_from_hub(HF_MODEL_ID)
+        
+        st.error(
+            "❌ **Gagal Mengunduh Model dari Hugging Face Hub**\n\n"
+            "**Kemungkinan Penyebab:**\n"
+            "- Tidak ada koneksi internet\n"
+            "- Model ID tidak valid atau repositori privat\n"
+            "- Server HuggingFace sedang tidak dapat diakses\n\n"
+            "**Solusi:**\n"
+            "✅ Periksa koneksi internet Anda\n"
+            "✅ Verifikasi model ID di: `huggingface.co/<username>/<repo>`\n"
+            "✅ Atau gunakan **Google Gemini** (tidak perlu internet untuk model)\n\n"
+            f"**Detail Error:** `{error_msg[:200]}`"
+        )
+        return None
+
 
 def clear_model_cache() -> None:
     """Hapus cache model (dipakai dari halaman Settings)."""
     load_model.clear()
-    logger.info("✅ Model cache cleared.")
+    load_model_from_hub.clear()
+    logger.info("✅ Model cache (lokal & HF Hub) berhasil dikosongkan.")
