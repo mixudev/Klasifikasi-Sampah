@@ -22,8 +22,9 @@ def render() -> None:
     if IS_STREAMLIT_CLOUD:
         st.info(
             "🚀 **Berjalan di Streamlit Cloud**\n\n"
-            "Mode Inferensi terbatas pada **Lokal (Offline)** untuk performance dan reliability. "
-            "Cloud API dan Gemini tidak tersedia di environment ini karena network restrictions."
+            "**Mode Lokal (Offline)** adalah default untuk performa optimal. "
+            "Anda juga bisa menggunakan **Google Gemini** sebagai alternatif jika diperlukan. "
+            "(Mode Cloud HuggingFace tidak tersedia karena network restrictions)"
         )
 
     # ── MODE INFERENSI (Lokal, HF Cloud, Google Gemini) ───────────────────
@@ -38,21 +39,12 @@ def render() -> None:
 
     current_mode = get_setting("inference_mode")
     
-    # Build mode options - disable cloud/gemini pada Streamlit Cloud
+    # Build mode options - di Streamlit Cloud: Local + Gemini only (no HF Cloud)
     if IS_STREAMLIT_CLOUD:
         mode_options = {
-            "Lokal (Offline - Mode Default di Cloud)": "local",
+            "Lokal (Offline - Rekomendasi / Default)": "local",
+            "Google Gemini AI (Multimodal - Alternatif Backup)": "gemini"
         }
-        selected_mode_label = st.radio(
-            "Mode Pemrosesan AI",
-            list(mode_options.keys()),
-        )
-        new_mode = mode_options[selected_mode_label]
-        
-        st.warning(
-            "⚠️ **Hanya Lokal (Offline) tersedia di Streamlit Cloud.**\n\n"
-            "Mode Cloud API dan Gemini memerlukan koneksi external yang tidak tersedia di environment ini."
-        )
     else:
         mode_options = {
             "Lokal (Offline - Mengunduh Model 343MB ke Komputer Anda)": "local",
@@ -60,52 +52,51 @@ def render() -> None:
             "Google Gemini AI (Multimodal - Instan, Sangat Cerdas & Presisi Tinggi)": "gemini"
         }
 
-        selected_mode_label = st.radio(
-            "Pilih Lokasi Pemrosesan AI",
-            list(mode_options.keys()),
-            index=list(mode_options.values()).index(current_mode) if current_mode in mode_options.values() else 0
-        )
-        new_mode = mode_options[selected_mode_label]
+    selected_mode_label = st.radio(
+        "Pilih Lokasi Pemrosesan AI",
+        list(mode_options.keys()),
+        index=list(mode_options.values()).index(current_mode) if current_mode in mode_options.values() else 0
+    )
     
+    new_mode = mode_options[selected_mode_label]
     if new_mode != current_mode:
         update_setting("inference_mode", new_mode)
         st.success(f"Mode pemrosesan dialihkan ke: {new_mode.upper()}")
         st.rerun()
 
-    # Tampilkan kolom Token / Key tergantung mode (hanya jika bukan Streamlit Cloud)
-    if not IS_STREAMLIT_CLOUD:
-        if new_mode == "cloud":
-            st.info(
-                "Info: Mode Cloud berjalan secara instan tanpa mengunduh model. "
-                "Sangat disarankan memasukkan Hugging Face Access Token Anda untuk menghindari pembatasan rate limit."
-            )
-            current_token = get_setting("hf_token")
-            new_token = st.text_input(
-                "Hugging Face User Access Token (Opsional)",
-                value=current_token,
-                type="password",
-                help="Dapatkan token gratis Anda di: huggingface.co/settings/tokens"
-            )
-            if new_token != current_token:
-                update_setting("hf_token", new_token.strip())
-                st.success("Hugging Face API Token diperbarui.")
+    # Tampilkan kolom Token / Key tergantung mode
+    if new_mode == "cloud" and not IS_STREAMLIT_CLOUD:
+        st.info(
+            "Info: Mode Cloud berjalan secara instan tanpa mengunduh model. "
+            "Sangat disarankan memasukkan Hugging Face Access Token Anda untuk menghindari pembatasan rate limit."
+        )
+        current_token = get_setting("hf_token")
+        new_token = st.text_input(
+            "Hugging Face User Access Token (Opsional)",
+            value=current_token,
+            type="password",
+            help="Dapatkan token gratis Anda di: huggingface.co/settings/tokens"
+        )
+        if new_token != current_token:
+            update_setting("hf_token", new_token.strip())
+            st.success("Hugging Face API Token diperbarui.")
 
-        elif new_mode == "gemini":
-            st.info(
-                "Info: Mode Google Gemini menggunakan model multimodal Gemini 1.5 Flash. "
-                "Proses identifikasi dilakukan di server Google menggunakan kecerdasan visual yang sangat tinggi. "
-                "Anda memerlukan API Key gratis dari Google AI Studio untuk menggunakan fitur ini."
-            )
-            current_gemini_key = get_setting("gemini_api_key")
-            new_gemini_key = st.text_input(
-                "Google Gemini API Key (Wajib / Gratis)",
-                value=current_gemini_key,
-                type="password",
-                help="Dapatkan API Key gratis Anda di: aistudio.google.com"
-            )
-            if new_gemini_key != current_gemini_key:
-                update_setting("gemini_api_key", new_gemini_key.strip())
-                st.success("Google Gemini API Key diperbarui.")
+    elif new_mode == "gemini":
+        st.info(
+            "Info: Mode Google Gemini menggunakan model multimodal Gemini 1.5 Flash. "
+            "Proses identifikasi dilakukan di server Google menggunakan kecerdasan visual yang sangat tinggi. "
+            "Anda memerlukan API Key gratis dari Google AI Studio untuk menggunakan fitur ini."
+        )
+        current_gemini_key = get_setting("gemini_api_key")
+        new_gemini_key = st.text_input(
+            "Google Gemini API Key (Wajib / Gratis)",
+            value=current_gemini_key,
+            type="password",
+            help="Dapatkan API Key gratis Anda di: aistudio.google.com"
+        )
+        if new_gemini_key != current_gemini_key:
+            update_setting("gemini_api_key", new_gemini_key.strip())
+            st.success("Google Gemini API Key diperbarui.")
 
     st.markdown("---")
 

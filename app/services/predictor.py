@@ -278,8 +278,6 @@ def predict(image: Image.Image, threshold: float = DEFAULT_CONFIDENCE_THRESHOLD)
     Returns:
         PredictionResult dengan semua informasi yang dibutuhkan UI.
     """
-    import os
-    
     # Validasi citra dasar
     is_valid, msg = validate_image(image)
     if not is_valid:
@@ -302,12 +300,6 @@ def predict(image: Image.Image, threshold: float = DEFAULT_CONFIDENCE_THRESHOLD)
     # Deteksi mode inferensi
     inference_mode = get_setting("inference_mode")
     model_id = get_setting("model_id")
-    
-    # Force local inference on Streamlit Cloud
-    IS_STREAMLIT_CLOUD = os.path.exists(os.path.expanduser("~/.streamlit"))
-    if IS_STREAMLIT_CLOUD:
-        logger.info("🚀 Streamlit Cloud detected - forcing LOCAL inference mode")
-        inference_mode = "local"
 
     # Mode 3: Google Gemini AI (Multimodal - visual prompting) -> Kode (G)
     if inference_mode == "gemini":
