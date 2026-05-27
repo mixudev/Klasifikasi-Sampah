@@ -16,16 +16,24 @@ from app.config import (
 
 # ─── Default Settings ──────────────────────────────────────────────────────────
 
-# Detect if running on Streamlit Cloud - force local inference
-IS_STREAMLIT_CLOUD = os.path.exists(os.path.expanduser("~/.streamlit"))
-DEFAULT_INFERENCE_MODE = "local" if IS_STREAMLIT_CLOUD else "gemini"
+# Detect if running on Streamlit Cloud
+# Pada Streamlit Cloud: gunakan Gemini sebagai default karena:
+#   - HF Serverless API tidak dapat diakses (DNS restriction)
+#   - Download model besar (300MB+) tidak reliabel di free tier
+#   - Gemini API key sudah dikonfigurasi dan langsung berjalan
+IS_STREAMLIT_CLOUD = (
+    os.environ.get("STREAMLIT_SHARING_MODE") is not None or
+    os.environ.get("STREAMLIT_SERVER_HEADLESS") is not None or
+    os.path.exists("/mount/src")  # Streamlit Cloud mount point
+)
+DEFAULT_INFERENCE_MODE = "gemini" if IS_STREAMLIT_CLOUD else "gemini"
 
 DEFAULT_SETTINGS = {
     "confidence_threshold": DEFAULT_CONFIDENCE_THRESHOLD,
     "model_id":             WASTE_MODEL_ID,
     "light_mode":           False,
     "auto_save_history":    True,
-    "inference_mode":       DEFAULT_INFERENCE_MODE,  # Force "local" on Streamlit Cloud
+    "inference_mode":       DEFAULT_INFERENCE_MODE,
     "hf_token":             "",
     "gemini_api_key":       GEMINI_API_KEY,
 }
@@ -189,6 +197,29 @@ def reset_settings_in_db() -> None:
 
 # ─── Streamlit Cache & State Bridges ───────────────────────────────────────────
 
+def _force_gemini_on_cloud(settings: dict) -> dict:
+    """
+    Proteksi Streamlit Cloud: jika berjalan di cloud dan mode masih 'cloud',
+    paksa ganti ke 'gemini' agar tidak mencoba hit HF Serverless API yang tidak dapat diakses.
+    Juga sinkronkan gemini_api_key dari config.py jika belum ada.
+    """
+    import importlib
+    import app.config as config
+    importlib.reload(config)
+
+    # Paksa mode 'gemini' jika di Streamlit Cloud dan mode saat ini adalah 'cloud'
+    if IS_STREAMLIT_CLOUD and settings.get("inference_mode") == "cloud":
+        settings["inference_mode"] = "gemini"
+        update_setting_in_db("inference_mode", "gemini")
+
+    # Selalu sinkronkan gemini_api_key dari config.py (agar tidak bergantung DB lama)
+    if config.GEMINI_API_KEY:
+        settings["gemini_api_key"] = config.GEMINI_API_KEY
+        update_setting_in_db("gemini_api_key", config.GEMINI_API_KEY)
+
+    return settings
+
+
 def init_session_state() -> None:
     """Inisialisasi semua session state key yang dibutuhkan aplikasi dari SQLite."""
     init_db()
@@ -197,25 +228,16 @@ def init_session_state() -> None:
     if STATE_SCAN_HISTORY not in st.session_state:
         st.session_state[STATE_SCAN_HISTORY] = get_history_from_db()
 
-    import importlib
-    import app.config as config
-    importlib.reload(config)
-
     # Load settings dari database SQLite jika belum ada di session state
     if STATE_SETTINGS not in st.session_state:
-        st.session_state[STATE_SETTINGS] = load_settings_from_db()
-        # Set default inference mode ke gemini saat inisialisasi awal jika kunci ada di config
-        if config.GEMINI_API_KEY and not load_settings_from_db().get("gemini_api_key"):
-            st.session_state[STATE_SETTINGS]["gemini_api_key"] = config.GEMINI_API_KEY
-            st.session_state[STATE_SETTINGS]["inference_mode"] = "gemini"
-            update_setting_in_db("gemini_api_key", config.GEMINI_API_KEY)
-            update_setting_in_db("inference_mode", "gemini")
+        loaded = load_settings_from_db()
+        loaded = _force_gemini_on_cloud(loaded)
+        st.session_state[STATE_SETTINGS] = loaded
     else:
-        # Jika sudah terinisialisasi, sinkronisasikan kunci baru jika berubah di config.py
-        # namun JANGAN menimpa pilihan inference_mode pengguna
-        if config.GEMINI_API_KEY and st.session_state[STATE_SETTINGS].get("gemini_api_key") != config.GEMINI_API_KEY:
-            st.session_state[STATE_SETTINGS]["gemini_api_key"] = config.GEMINI_API_KEY
-            update_setting_in_db("gemini_api_key", config.GEMINI_API_KEY)
+        # Sudah ada di session state — tetap cek & paksa jika diperlukan
+        st.session_state[STATE_SETTINGS] = _force_gemini_on_cloud(
+            st.session_state[STATE_SETTINGS]
+        )
 
 
 def get_history() -> list[dict]:

@@ -6,12 +6,9 @@ Bebas emoji dan menerapkan sudut siku sesuai UI_ROLE.md.
 
 import streamlit as st
 import os
-from app.utils.cache import get_setting, update_setting, reset_settings, clear_history
+from app.utils.cache import get_setting, update_setting, reset_settings, clear_history, IS_STREAMLIT_CLOUD
 from app.services.model_loader import clear_model_cache
 from app.config import WASTE_MODEL_ID, HF_MODEL_ID
-
-# Detect Streamlit Cloud
-IS_STREAMLIT_CLOUD = os.path.exists(os.path.expanduser("~/.streamlit"))
 
 
 def render() -> None:
@@ -20,11 +17,11 @@ def render() -> None:
 
     # Show info jika di Streamlit Cloud
     if IS_STREAMLIT_CLOUD:
-        st.info(
-            "🚀 **Berjalan di Streamlit Cloud**\n\n"
-            "**Mode Lokal (Offline)** adalah default untuk performa optimal. "
-            "Anda juga bisa menggunakan **Google Gemini** sebagai alternatif jika diperlukan. "
-            "(Mode Cloud HuggingFace tidak tersedia karena network restrictions)"
+        st.success(
+            "🚀 **Berjalan di Streamlit Cloud — Mode Gemini Aktif**\n\n"
+            "Aplikasi ini berjalan menggunakan **Google Gemini AI** sebagai engine klasifikasi. "
+            "Mode ini adalah yang paling stabil di Streamlit Cloud karena tidak memerlukan "
+            "download model besar dan tidak tergantung pada Hugging Face Inference API."
         )
 
     # ── MODE INFERENSI (Lokal, HF Cloud, Google Gemini) ───────────────────
@@ -39,11 +36,11 @@ def render() -> None:
 
     current_mode = get_setting("inference_mode")
     
-    # Build mode options - di Streamlit Cloud: Local + Gemini only (no HF Cloud)
+    # Build mode options - di Streamlit Cloud: Gemini + HF Hub saja (tidak ada "cloud" API)
     if IS_STREAMLIT_CLOUD:
         mode_options = {
-            "Lokal (Offline - Rekomendasi / Default)": "local",
-            "Google Gemini AI (Multimodal - Alternatif Backup)": "gemini"
+            "✨ Google Gemini AI (Rekomendasi — Stabil & Instan di Cloud)": "gemini",
+            "🤗 HF Hub (Download model ~300MB — Mungkin lambat di free tier)": "cloud",
         }
     else:
         mode_options = {
