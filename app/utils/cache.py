@@ -16,12 +16,16 @@ from app.config import (
 
 # ─── Default Settings ──────────────────────────────────────────────────────────
 
+# Detect if running on Streamlit Cloud - force local inference
+IS_STREAMLIT_CLOUD = os.path.exists(os.path.expanduser("~/.streamlit"))
+DEFAULT_INFERENCE_MODE = "local" if IS_STREAMLIT_CLOUD else "gemini"
+
 DEFAULT_SETTINGS = {
     "confidence_threshold": DEFAULT_CONFIDENCE_THRESHOLD,
     "model_id":             WASTE_MODEL_ID,
     "light_mode":           False,
     "auto_save_history":    True,
-    "inference_mode":       "gemini",
+    "inference_mode":       DEFAULT_INFERENCE_MODE,  # Force "local" on Streamlit Cloud
     "hf_token":             "",
     "gemini_api_key":       GEMINI_API_KEY,
 }
