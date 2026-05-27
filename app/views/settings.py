@@ -1,201 +1,244 @@
 """
-settings.py — Halaman 10: Settings & Config.
-Pengaturan ambang batas keyakinan, mode inferensi (lokal/cloud/gemini), token API, dan manajemen cache model.
-Bebas emoji dan menerapkan sudut siku sesuai UI_ROLE.md.
+settings.py — Halaman Pengaturan Sistem WasteAI.
+
+Mengelola konfigurasi mode inferensi (HuggingFace Hub / Google Gemini),
+model yang digunakan, ambang batas keyakinan, dan manajemen cache.
 """
 
 import streamlit as st
-import os
-from app.utils.cache import get_setting, update_setting, reset_settings, clear_history, IS_STREAMLIT_CLOUD
+from app.utils.cache import (
+    IS_STREAMLIT_CLOUD,
+    get_setting,
+    update_setting,
+    reset_settings,
+    clear_history,
+)
 from app.services.model_loader import clear_model_cache
 from app.config import WASTE_MODEL_ID, HF_MODEL_ID
 
+# Model-model yang direkomendasikan dengan deskripsinya
+_RECOMMENDED_MODELS = {
+    "wayfarer130/garbage-classification-vit": "🗑️ Waste ViT — Model khusus sampah (ViT, ~350MB)",
+    "Sintong/TrashNetResNet18":               "⚡ TrashNet ResNet18 — Ringan & cepat (~45MB)",
+    "google/vit-base-patch16-224":            "🤖 Google ViT Base — Model generik ImageNet (~350MB)",
+}
+
+_SECTION_STYLE = (
+    'font-size:1.1rem; font-weight:800; color:#0F172A; '
+    'text-transform:uppercase; letter-spacing:0.5px; '
+    'border-left:4px solid #16A34A; padding-left:0.6rem; '
+    'margin-top:1.8rem; margin-bottom:0.8rem;'
+)
+
+
+def _section_header(title: str) -> None:
+    st.markdown(f'<h3 style="{_SECTION_STYLE}">{title}</h3>', unsafe_allow_html=True)
+
+
+# ─── Render ───────────────────────────────────────────────────────────────────
 
 def render() -> None:
     st.title("Pengaturan Sistem")
-    st.caption("Konfigurasi parameter inferensi kecerdasan buatan, perilaku database lokal, dan memori cache.")
-
-    # Show info jika di Streamlit Cloud
-    if IS_STREAMLIT_CLOUD:
-        st.success(
-            "🚀 **Berjalan di Streamlit Cloud — Mode Gemini Aktif**\n\n"
-            "Aplikasi ini berjalan menggunakan **Google Gemini AI** sebagai engine klasifikasi. "
-            "Mode ini adalah yang paling stabil di Streamlit Cloud karena tidak memerlukan "
-            "download model besar dan tidak tergantung pada Hugging Face Inference API."
-        )
-
-    # ── MODE INFERENSI (Lokal, HF Cloud, Google Gemini) ───────────────────
-    st.markdown(
-        """
-        <h3 style="font-size:1.15rem; font-weight:800; color:#0F172A; text-transform:uppercase; letter-spacing:0.5px; border-left:4px solid #16A34A; padding-left:0.6rem; margin-top:1.5rem; margin-bottom:1rem;">
-            Mode Inferensi (Pemrosesan AI)
-        </h3>
-        """,
-        unsafe_allow_html=True,
+    st.caption(
+        "Konfigurasi engine AI, model yang digunakan, "
+        "ambang batas keyakinan, dan manajemen cache."
     )
 
-    current_mode = get_setting("inference_mode")
-    
-    # Build mode options - di Streamlit Cloud: Gemini + HF Hub saja (tidak ada "cloud" API)
+    # ── Banner lingkungan ──────────────────────────────────────────────────────
     if IS_STREAMLIT_CLOUD:
-        mode_options = {
-            "✨ Google Gemini AI (Rekomendasi — Stabil & Instan di Cloud)": "gemini",
-            "🤗 HF Hub (Download model ~300MB — Mungkin lambat di free tier)": "cloud",
-        }
-    else:
-        mode_options = {
-            "Lokal (Offline - Mengunduh Model 343MB ke Komputer Anda)": "local",
-            "Hugging Face Hub (Download Model Publik - Cache Otomatis Setelah Download Pertama)": "cloud",
-            "Google Gemini AI (Multimodal - Instan, Sangat Cerdas & Presisi Tinggi)": "gemini"
-        }
-
-    selected_mode_label = st.radio(
-        "Pilih Lokasi Pemrosesan AI",
-        list(mode_options.keys()),
-        index=list(mode_options.values()).index(current_mode) if current_mode in mode_options.values() else 0
-    )
-    
-    new_mode = mode_options[selected_mode_label]
-    if new_mode != current_mode:
-        update_setting("inference_mode", new_mode)
-        st.success(f"Mode pemrosesan dialihkan ke: {new_mode.upper()}")
-        st.rerun()
-
-    # Tampilkan kolom Token / Key tergantung mode
-    if new_mode == "cloud" and not IS_STREAMLIT_CLOUD:
         st.info(
-            "ℹ️ **Mode Hugging Face Hub**: Model diunduh langsung dari repositori publik Hugging Face "
-            "menggunakan library `transformers`. Download hanya terjadi sekali, setelah itu model "
-            "akan di-cache di komputer Anda dan bisa digunakan offline.\n\n"
-            "Pastikan koneksi internet tersedia untuk download pertama kali (~300-400 MB)."
+            "☁️ **Berjalan di Streamlit Cloud**\n\n"
+            "Mode **Hugging Face Hub** akan mengunduh model saat pertama kali digunakan "
+            "(tergantung ukuran model: ~1–5 menit). Setelah itu, model di-cache selama sesi berlangsung. "
+            "Mode **Google Gemini** tersedia sebagai alternatif instan tanpa download model."
         )
-        current_model_hf = get_setting("model_id")
-        st.markdown(f"**Model aktif:** `{current_model_hf}`")
-        st.caption("Ubah model di bagian 'Parameter Analisis AI' di bawah.")
-
-    elif new_mode == "gemini":
-        st.info(
-            "Info: Mode Google Gemini menggunakan model multimodal Gemini 1.5 Flash. "
-            "Proses identifikasi dilakukan di server Google menggunakan kecerdasan visual yang sangat tinggi. "
-            "Anda memerlukan API Key gratis dari Google AI Studio untuk menggunakan fitur ini."
-        )
-        current_gemini_key = get_setting("gemini_api_key")
-        new_gemini_key = st.text_input(
-            "Google Gemini API Key (Wajib / Gratis)",
-            value=current_gemini_key,
-            type="password",
-            help="Dapatkan API Key gratis Anda di: aistudio.google.com"
-        )
-        if new_gemini_key != current_gemini_key:
-            update_setting("gemini_api_key", new_gemini_key.strip())
-            st.success("Google Gemini API Key diperbarui.")
 
     st.markdown("---")
 
-    # ── PARAMETER AI ──────────────────────────────────────────────────────────
-    st.markdown(
-        """
-        <h3 style="font-size:1.15rem; font-weight:800; color:#0F172A; text-transform:uppercase; letter-spacing:0.5px; border-left:4px solid #16A34A; padding-left:0.6rem; margin-bottom:1rem;">
-            Parameter Analisis AI (Khusus Lokal / HF Cloud)
-        </h3>
-        """,
-        unsafe_allow_html=True,
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BAGIAN 1 — MODE INFERENSI
+    # ═══════════════════════════════════════════════════════════════════════════
+    _section_header("Mode Inferensi AI")
+
+    current_mode = get_setting("inference_mode") or "hugging"
+
+    MODE_OPTIONS = {
+        "🤗 Hugging Face Hub  —  Model diunduh & dijalankan lokal (tanpa batas kuota)": "hugging",
+        "✨ Google Gemini AI  —  Multimodal, instan, tanpa download model": "gemini",
+    }
+
+    # Pastikan index valid jika mode lama sudah dimigrasi
+    mode_values = list(MODE_OPTIONS.values())
+    current_index = mode_values.index(current_mode) if current_mode in mode_values else 0
+
+    selected_label = st.radio(
+        "Pilih Engine Pemrosesan AI",
+        list(MODE_OPTIONS.keys()),
+        index=current_index,
+        help=(
+            "• **HF Hub**: Model diunduh dari HuggingFace dan berjalan di server ini. "
+            "Tidak ada batas kuota. Unggul untuk volume prediksi tinggi.\n\n"
+            "• **Gemini**: Gambar dikirim ke Google AI. Tidak perlu download model. "
+            "Ada batas kuota gratis harian."
+        ),
     )
 
-    # 1. Confidence Threshold
-    current_threshold = get_setting("confidence_threshold")
+    new_mode = MODE_OPTIONS[selected_label]
+    if new_mode != current_mode:
+        update_setting("inference_mode", new_mode)
+        st.success(f"✅ Mode inferensi berubah ke: **{new_mode.upper()}**")
+        st.rerun()
+
+    # ── Info kontekstual per mode ──────────────────────────────────────────────
+    if new_mode == "hugging":
+        model_id = get_setting("model_id") or WASTE_MODEL_ID
+        st.info(
+            f"ℹ️ **Mode HuggingFace Hub** aktif.\n\n"
+            f"Model saat ini: `{model_id}`\n\n"
+            "Model diunduh otomatis dari HuggingFace saat pertama kali digunakan, "
+            "kemudian di-cache. Inferensi berjalan sepenuhnya di server — "
+            "tidak ada batas kuota penggunaan."
+        )
+    else:
+        current_key = get_setting("gemini_api_key") or ""
+        is_key_set = bool(current_key.strip())
+
+        if is_key_set:
+            st.success(
+                "✅ **Mode Google Gemini** aktif.\n\n"
+                "API Key terdeteksi. Prediksi dikirim ke Google AI secara aman. "
+                "Batas kuota gratis: ~1.500 permintaan/hari (Gemini 2.0 Flash)."
+            )
+        else:
+            st.warning(
+                "⚠️ **Gemini API Key belum dikonfigurasi.**\n\n"
+                "Dapatkan API Key gratis di: [aistudio.google.com](https://aistudio.google.com)"
+            )
+
+        new_key = st.text_input(
+            "Google Gemini API Key",
+            value=current_key,
+            type="password",
+            placeholder="AIzaSy...",
+            help="Dapatkan API Key gratis di: aistudio.google.com",
+        )
+        if new_key.strip() != current_key.strip():
+            update_setting("gemini_api_key", new_key.strip())
+            st.success("✅ API Key Gemini berhasil diperbarui.")
+
+    st.markdown("---")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BAGIAN 2 — KONFIGURASI MODEL (hanya relevan untuk mode HF Hub)
+    # ═══════════════════════════════════════════════════════════════════════════
+    _section_header("Konfigurasi Model Hugging Face Hub")
+
+    current_model = get_setting("model_id") or WASTE_MODEL_ID
+
+    st.caption("**Model Rekomendasi** (klik untuk memilih):")
+    cols = st.columns(len(_RECOMMENDED_MODELS))
+    for col, (model_id_opt, label) in zip(cols, _RECOMMENDED_MODELS.items()):
+        with col:
+            is_active = (model_id_opt == current_model)
+            btn_type = "primary" if is_active else "secondary"
+            if st.button(label, type=btn_type, use_container_width=True):
+                if model_id_opt != current_model:
+                    update_setting("model_id", model_id_opt)
+                    clear_model_cache()   # Hapus cache agar model baru dimuat
+                    st.success(f"✅ Model diubah ke: `{model_id_opt}`")
+                    st.rerun()
+
+    new_model = st.text_input(
+        "Atau masukkan Model ID kustom",
+        value=current_model,
+        placeholder="username/nama-repo-model",
+        help=(
+            "Format: `username/repo-name` sesuai URL di huggingface.co. "
+            "Hanya model publik yang dapat diakses tanpa token."
+        ),
+    )
+    if new_model.strip() and new_model.strip() != current_model:
+        update_setting("model_id", new_model.strip())
+        clear_model_cache()
+        st.success(f"✅ Model ID diperbarui: `{new_model.strip()}`")
+
+    st.markdown("---")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BAGIAN 3 — PARAMETER ANALISIS
+    # ═══════════════════════════════════════════════════════════════════════════
+    _section_header("Parameter Analisis AI")
+
+    current_threshold = float(get_setting("confidence_threshold") or 0.6)
     new_threshold = st.slider(
         "Ambang Batas Keyakinan (Confidence Threshold)",
-        min_value=0.1,
-        max_value=1.0,
-        value=float(current_threshold),
+        min_value=0.10,
+        max_value=1.00,
+        value=current_threshold,
         step=0.05,
-        help="Hasil pemindaian hanya dianggap TERVERIFIKASI jika tingkat keyakinan melebihi batas ini."
+        format="%.0f%%",
+        help=(
+            "Hasil dianggap TERVERIFIKASI hanya jika tingkat keyakinan model "
+            "melebihi nilai ini. Nilai lebih rendah = lebih sensitif namun lebih sering salah."
+        ),
     )
     if new_threshold != current_threshold:
         update_setting("confidence_threshold", new_threshold)
-        st.success(f"Ambang batas keyakinan diperbarui menjadi {new_threshold*100:.0f}%.")
-
-    # 2. Model HuggingFace ID
-    current_model = get_setting("model_id")
-    
-    st.markdown("**Konfigurasi Model Hugging Face (Lokal / Cloud):**")
-    
-    # Tombol pilihan cepat untuk kegunaan yang mudah
-    st.caption("Pilihan Cepat Model Populer:")
-    col_m1, col_m2, col_m3 = st.columns(3)
-    with col_m1:
-        if st.button("Model Spesifik Sampah", type="secondary", use_container_width=True, help=f"Setel model ke: {WASTE_MODEL_ID}"):
-            update_setting("model_id", WASTE_MODEL_ID)
-            st.rerun()
-    with col_m2:
-        if st.button("Model Google ViT Generik", type="secondary", use_container_width=True, help=f"Setel model ke: {HF_MODEL_ID}"):
-            update_setting("model_id", HF_MODEL_ID)
-            st.rerun()
-    with col_m3:
-        if st.button("Model TrashNet ResNet18", type="secondary", use_container_width=True, help="Setel model ke: Sintong/TrashNetResNet18"):
-            update_setting("model_id", "Sintong/TrashNetResNet18")
-            st.rerun()
-
-    new_model = st.text_input(
-        "Hugging Face Model ID Aktif",
-        value=current_model,
-        help="Masukkan nama repositori model di Hugging Face Hub (misal: wayfarer130/garbage-classification-vit)"
-    )
-    
-    if new_model.strip() != current_model:
-        update_setting("model_id", new_model.strip())
-        st.success(f"Model ID diperbarui menjadi: {new_model.strip()}")
+        st.success(f"✅ Ambang batas diperbarui: **{new_threshold*100:.0f}%**")
 
     st.markdown("---")
 
-    # ── SETTING SISTEM & RIWAYAT ──────────────────────────────────────────────
-    st.markdown(
-        """
-        <h3 style="font-size:1.15rem; font-weight:800; color:#0F172A; text-transform:uppercase; letter-spacing:0.5px; border-left:4px solid #16A34A; padding-left:0.6rem; margin-bottom:1rem;">
-            Manajemen Riwayat & Perilaku Sesi
-        </h3>
-        """,
-        unsafe_allow_html=True,
-    )
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BAGIAN 4 — MANAJEMEN RIWAYAT & SESI
+    # ═══════════════════════════════════════════════════════════════════════════
+    _section_header("Manajemen Riwayat & Sesi")
 
-    # 3. Auto Save
-    current_auto_save = get_setting("auto_save_history")
+    current_auto_save = bool(get_setting("auto_save_history"))
     new_auto_save = st.checkbox(
         "Simpan Hasil Scan ke Riwayat Secara Otomatis",
-        value=current_auto_save
+        value=current_auto_save,
     )
     if new_auto_save != current_auto_save:
         update_setting("auto_save_history", new_auto_save)
-        st.success("Konfigurasi penyimpanan riwayat diperbarui.")
+        st.success("✅ Pengaturan penyimpanan riwayat diperbarui.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── TINDAKAN PEMBERSIHAN ──────────────────────────────────────────────────
-    st.markdown(
-        """
-        <h3 style="font-size:1.15rem; font-weight:800; color:#0F172A; text-transform:uppercase; letter-spacing:0.5px; border-left:4px solid #16A34A; padding-left:0.6rem; margin-bottom:1rem;">
-            Pemeliharaan Cache & Reset
-        </h3>
-        """,
-        unsafe_allow_html=True,
-    )
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BAGIAN 5 — PEMELIHARAAN CACHE & RESET
+    # ═══════════════════════════════════════════════════════════════════════════
+    _section_header("Pemeliharaan Cache & Reset")
 
-    col_btn_1, col_btn_2, col_btn_3 = st.columns(3)
+    col1, col2, col3 = st.columns(3)
 
-    with col_btn_1:
-        if st.button("RESET SETTING KE DEFAULT", type="secondary", use_container_width=True):
-            reset_settings()
-            st.success("Seluruh pengaturan telah dikembalikan ke default.")
+    with col1:
+        if st.button(
+            "🔄 Hapus Cache Model AI",
+            type="secondary",
+            use_container_width=True,
+            help="Paksa download ulang model saat prediksi berikutnya.",
+        ):
+            clear_model_cache()
+            st.success("✅ Cache model berhasil dihapus. Model akan diunduh ulang saat prediksi berikutnya.")
+
+    with col2:
+        if st.button(
+            "🗑️ Kosongkan Riwayat Scan",
+            type="secondary",
+            use_container_width=True,
+        ):
+            clear_history()
+            st.success("✅ Seluruh riwayat scan berhasil dikosongkan.")
             st.rerun()
 
-    with col_btn_2:
-        if st.button("HAPUS CACHE MODEL AI", type="secondary", use_container_width=True):
+    with col3:
+        if st.button(
+            "⚠️ Reset Semua Pengaturan",
+            type="secondary",
+            use_container_width=True,
+            help="Kembalikan semua pengaturan ke nilai default.",
+        ):
+            reset_settings()
             clear_model_cache()
-            st.success("Memori cache model AI lokal berhasil dikosongkan.")
-
-    with col_btn_3:
-        if st.button("KOSONGKAN RIWAYAT SCAN", type="secondary", use_container_width=True):
-            clear_history()
-            st.success("Seluruh catatan riwayat telah dikosongkan.")
+            st.success("✅ Semua pengaturan dikembalikan ke default.")
             st.rerun()

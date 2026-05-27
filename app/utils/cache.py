@@ -16,25 +16,21 @@ from app.config import (
 
 # ─── Default Settings ──────────────────────────────────────────────────────────
 
-# Detect if running on Streamlit Cloud
-# Pada Streamlit Cloud: gunakan Gemini sebagai default karena:
-#   - HF Serverless API tidak dapat diakses (DNS restriction)
-#   - Download model besar (300MB+) tidak reliabel di free tier
-#   - Gemini API key sudah dikonfigurasi dan langsung berjalan
-IS_STREAMLIT_CLOUD = (
-    os.environ.get("STREAMLIT_SHARING_MODE") is not None or
-    os.environ.get("STREAMLIT_SERVER_HEADLESS") is not None or
-    os.path.exists("/mount/src")  # Streamlit Cloud mount point
+# Deteksi lingkungan Streamlit Cloud berdasarkan indikator yang reliabel
+IS_STREAMLIT_CLOUD: bool = (
+    os.environ.get("STREAMLIT_SHARING_MODE") is not None  # Variabel khusus Streamlit Cloud
+    or os.path.exists("/mount/src")                        # Mount point khas Streamlit Cloud
 )
-DEFAULT_INFERENCE_MODE = "gemini" if IS_STREAMLIT_CLOUD else "gemini"
 
-DEFAULT_SETTINGS = {
+# Mode inferensi default: "hugging" (HuggingFace Hub) untuk semua environment
+DEFAULT_INFERENCE_MODE = "hugging"
+
+DEFAULT_SETTINGS: dict = {
     "confidence_threshold": DEFAULT_CONFIDENCE_THRESHOLD,
     "model_id":             WASTE_MODEL_ID,
     "light_mode":           False,
     "auto_save_history":    True,
     "inference_mode":       DEFAULT_INFERENCE_MODE,
-    "hf_token":             "",
     "gemini_api_key":       GEMINI_API_KEY,
 }
 
@@ -197,45 +193,68 @@ def reset_settings_in_db() -> None:
 
 # ─── Streamlit Cache & State Bridges ───────────────────────────────────────────
 
-def _force_gemini_on_cloud(settings: dict) -> dict:
+# Mode yang valid di versi baru aplikasi ini
+_VALID_MODES = {"hugging", "gemini"}
+
+# Pemetaan mode lama ke mode baru
+_LEGACY_MODE_MAP = {
+    "local": "hugging",   # Mode lokal dihapus → gunakan HF Hub
+    "cloud": "hugging",   # Mode cloud API lama → gunakan HF Hub
+}
+
+
+def _migrate_legacy_settings(settings: dict) -> dict:
     """
-    Proteksi Streamlit Cloud: jika berjalan di cloud dan mode masih 'cloud',
-    paksa ganti ke 'gemini' agar tidak mencoba hit HF Serverless API yang tidak dapat diakses.
-    Juga sinkronkan gemini_api_key dari config.py jika belum ada.
+    Migrasi pengaturan dari versi lama aplikasi ke versi baru.
+
+    Konversi:
+      - inference_mode "local" → "hugging"
+      - inference_mode "cloud" → "hugging"
+      - Sinkronisasi gemini_api_key dari config.py
+      - Hapus key usang (hf_token)
     """
     import importlib
-    import app.config as config
-    importlib.reload(config)
+    import app.config as cfg
+    importlib.reload(cfg)
 
-    # Paksa mode 'gemini' jika di Streamlit Cloud dan mode saat ini adalah 'cloud'
-    if IS_STREAMLIT_CLOUD and settings.get("inference_mode") == "cloud":
-        settings["inference_mode"] = "gemini"
-        update_setting_in_db("inference_mode", "gemini")
+    changed = False
 
-    # Selalu sinkronkan gemini_api_key dari config.py (agar tidak bergantung DB lama)
-    if config.GEMINI_API_KEY:
-        settings["gemini_api_key"] = config.GEMINI_API_KEY
-        update_setting_in_db("gemini_api_key", config.GEMINI_API_KEY)
+    # Konversi mode lama ke mode baru
+    current_mode = settings.get("inference_mode", DEFAULT_INFERENCE_MODE)
+    if current_mode not in _VALID_MODES:
+        new_mode = _LEGACY_MODE_MAP.get(current_mode, DEFAULT_INFERENCE_MODE)
+        settings["inference_mode"] = new_mode
+        update_setting_in_db("inference_mode", new_mode)
+        changed = True
+
+    # Selalu sinkronkan gemini_api_key dari config.py (source of truth)
+    if cfg.GEMINI_API_KEY and settings.get("gemini_api_key") != cfg.GEMINI_API_KEY:
+        settings["gemini_api_key"] = cfg.GEMINI_API_KEY
+        update_setting_in_db("gemini_api_key", cfg.GEMINI_API_KEY)
+        changed = True
+
+    if changed:
+        import logging
+        logging.getLogger(__name__).info("[Cache] Pengaturan lama berhasil dimigrasi.")
 
     return settings
 
 
 def init_session_state() -> None:
-    """Inisialisasi semua session state key yang dibutuhkan aplikasi dari SQLite."""
+    """Inisialisasi semua session state yang dibutuhkan aplikasi dari SQLite."""
     init_db()
-    
-    # Load riwayat dari database SQLite jika belum ada di session state
+
+    # Load riwayat scan
     if STATE_SCAN_HISTORY not in st.session_state:
         st.session_state[STATE_SCAN_HISTORY] = get_history_from_db()
 
-    # Load settings dari database SQLite jika belum ada di session state
+    # Load dan migrasi pengaturan
     if STATE_SETTINGS not in st.session_state:
         loaded = load_settings_from_db()
-        loaded = _force_gemini_on_cloud(loaded)
-        st.session_state[STATE_SETTINGS] = loaded
+        st.session_state[STATE_SETTINGS] = _migrate_legacy_settings(loaded)
     else:
-        # Sudah ada di session state — tetap cek & paksa jika diperlukan
-        st.session_state[STATE_SETTINGS] = _force_gemini_on_cloud(
+        # Tetap sinkronkan Gemini key jika config.py diperbarui
+        st.session_state[STATE_SETTINGS] = _migrate_legacy_settings(
             st.session_state[STATE_SETTINGS]
         )
 
