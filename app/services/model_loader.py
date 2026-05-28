@@ -106,7 +106,6 @@ def _try_load_pipeline(model_id: str, hf_token: str = "") -> Tuple[Optional[pipe
             model=model_id,
             device=-1,           # CPU only — aman di semua environment
             top_k=None,          # Kembalikan seluruh skor kelas
-            local_files_only=False,
             token=hf_token.strip() if hf_token else None,  # Pass token jika ada
         )
         logger.info(f"[ModelLoader] ✅ Berhasil: {model_id}")
