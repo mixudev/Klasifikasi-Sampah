@@ -21,6 +21,7 @@ from typing import Optional, Tuple
 
 import streamlit as st
 from transformers import pipeline
+from huggingface_hub import login as hf_login
 
 from app.config import HF_MODEL_ID, WASTE_MODEL_ID
 
@@ -33,6 +34,33 @@ _FALLBACK_MODEL_ID = "Sintong/TrashNetResNet18"  # Model ringan ~45MB sebagai fa
 # Set timeout SEBELUM transformers digunakan (diperlukan di Streamlit Cloud)
 os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")  # Pastikan download diizinkan
+
+
+# ─── HuggingFace Authentication ───────────────────────────────────────────────
+
+def _setup_hf_authentication(hf_token: str = "") -> None:
+    """
+    Setup HuggingFace authentication.
+    Jika token diberikan, gunakan untuk akses model private di HF.
+    
+    Args:
+        hf_token: HuggingFace token untuk autentikasi (optional).
+    """
+    if hf_token and hf_token.strip():
+        try:
+            # Simpan token di environment variable untuk transformers library
+            os.environ["HF_TOKEN"] = hf_token.strip()
+            os.environ["HUGGINGFACE_HUB_TOKEN"] = hf_token.strip()
+            # Login ke HuggingFace Hub
+            hf_login(token=hf_token.strip(), add_to_git_credential=False)
+            logger.info("[ModelLoader] ✅ HuggingFace authentication berhasil.")
+        except Exception as e:
+            logger.warning(f"[ModelLoader] ⚠️ HF authentication gagal: {e}")
+    else:
+        # Pastikan tidak ada token yang tersimpan
+        os.environ.pop("HF_TOKEN", None)
+        os.environ.pop("HUGGINGFACE_HUB_TOKEN", None)
+        logger.info("[ModelLoader] HuggingFace authentication: mode publik.")
 
 
 # ─── Connectivity Check ───────────────────────────────────────────────────────
@@ -58,19 +86,28 @@ def _check_hf_connectivity(timeout: int = 8) -> Tuple[bool, str]:
 
 # ─── Model Loader ─────────────────────────────────────────────────────────────
 
-def _try_load_pipeline(model_id: str) -> Tuple[Optional[pipeline], str]:
+def _try_load_pipeline(model_id: str, hf_token: str = "") -> Tuple[Optional[pipeline], str]:
     """
     Satu upaya memuat model pipeline. Mengembalikan (pipeline, error_str).
     Jika berhasil: (pipeline_object, "").
     Jika gagal:    (None, "pesan error aktual").
+    
+    Args:
+        model_id: ID model di HuggingFace Hub.
+        hf_token: Token HuggingFace untuk akses model private (optional).
     """
     try:
+        # Setup authentication jika ada token
+        _setup_hf_authentication(hf_token)
+        
+        # Load pipeline dengan atau tanpa token
         clf = pipeline(
             task="image-classification",
             model=model_id,
             device=-1,           # CPU only — aman di semua environment
             top_k=None,          # Kembalikan seluruh skor kelas
             local_files_only=False,
+            token=hf_token.strip() if hf_token else None,  # Pass token jika ada
         )
         logger.info(f"[ModelLoader] ✅ Berhasil: {model_id}")
         return clf, ""
@@ -81,24 +118,29 @@ def _try_load_pipeline(model_id: str) -> Tuple[Optional[pipeline], str]:
 
 
 @st.cache_resource(show_spinner="⏳ Mengunduh model AI dari Hugging Face Hub...")
-def load_model_from_hub(model_id: str = WASTE_MODEL_ID) -> Optional[pipeline]:
+def load_model_from_hub(model_id: str = WASTE_MODEL_ID, hf_token: str = "") -> Optional[pipeline]:
     """
     Muat model image-classification dari HuggingFace Hub.
 
     Alur eksekusi:
-      1. Uji konektivitas ke huggingface.co
-      2. Coba model yang diminta (model_id)
-      3. Fallback ke TrashNetResNet18 (lebih ringan)
-      4. Fallback ke google/vit-base-patch16-224 (generik)
-      5. Jika semua gagal → return None (predictor akan beralih ke Gemini)
+      1. Setup HuggingFace authentication (jika ada token)
+      2. Uji konektivitas ke huggingface.co
+      3. Coba model yang diminta (model_id)
+      4. Fallback ke TrashNetResNet18 (lebih ringan)
+      5. Fallback ke google/vit-base-patch16-224 (generik)
+      6. Jika semua gagal → return None (predictor akan beralih ke Gemini)
 
     Args:
         model_id: ID model di HuggingFace Hub (format: 'username/repo-name').
+        hf_token: Token HuggingFace untuk akses model private (optional).
 
     Returns:
         HuggingFace pipeline siap pakai, atau None jika semua upaya gagal.
     """
     logger.info(f"[ModelLoader] Memulai pemuatan: {model_id}")
+    
+    # ── Langkah 0: Setup HuggingFace authentication ────────────────────────
+    _setup_hf_authentication(hf_token)
 
     # ── Langkah 1: Cek konektivitas ke HuggingFace ───────────────────────────
     is_reachable, conn_err = _check_hf_connectivity()
@@ -119,7 +161,7 @@ def load_model_from_hub(model_id: str = WASTE_MODEL_ID) -> Optional[pipeline]:
     last_error = ""
 
     # ── Langkah 2: Coba model yang diminta ───────────────────────────────────
-    clf, err = _try_load_pipeline(model_id)
+    clf, err = _try_load_pipeline(model_id, hf_token)
     if clf is not None:
         return clf
     last_error = err
@@ -127,7 +169,7 @@ def load_model_from_hub(model_id: str = WASTE_MODEL_ID) -> Optional[pipeline]:
     # ── Langkah 3: Fallback ke model ringan ──────────────────────────────────
     if model_id != _FALLBACK_MODEL_ID:
         logger.info(f"[ModelLoader] 🔄 Fallback ke model ringan: {_FALLBACK_MODEL_ID}")
-        clf, err = _try_load_pipeline(_FALLBACK_MODEL_ID)
+        clf, err = _try_load_pipeline(_FALLBACK_MODEL_ID, hf_token)
         if clf is not None:
             st.warning(
                 f"⚠️ Model `{model_id}` gagal dimuat. "
@@ -139,7 +181,7 @@ def load_model_from_hub(model_id: str = WASTE_MODEL_ID) -> Optional[pipeline]:
     # ── Langkah 4: Fallback ke model generik ─────────────────────────────────
     if model_id != HF_MODEL_ID and _FALLBACK_MODEL_ID != HF_MODEL_ID:
         logger.info(f"[ModelLoader] 🔄 Fallback terakhir: {HF_MODEL_ID}")
-        clf, err = _try_load_pipeline(HF_MODEL_ID)
+        clf, err = _try_load_pipeline(HF_MODEL_ID, hf_token)
         if clf is not None:
             st.warning(
                 f"⚠️ Model utama tidak tersedia. "

@@ -159,6 +159,7 @@ def _predict_hugging(
     image: Image.Image,
     model_id: str,
     threshold: float,
+    hf_token: str = "",
 ) -> PredictionResult:
     """
     Jalankan inferensi menggunakan model dari HuggingFace Hub (kode: H).
@@ -166,8 +167,14 @@ def _predict_hugging(
     Model diunduh via `transformers` dan di-cache oleh Streamlit.
     Inferensi berjalan sepenuhnya di sisi server (CPU) — tidak bergantung
     pada API eksternal setelah model berhasil dimuat.
+    
+    Args:
+        image: PIL Image untuk diprediksi.
+        model_id: ID model di HuggingFace Hub.
+        threshold: Ambang batas confidence.
+        hf_token: Token HuggingFace untuk akses model private (optional).
     """
-    model = load_model_from_hub(model_id)
+    model = load_model_from_hub(model_id, hf_token)
     if model is None:
         return _error_result(
             "H",
@@ -349,6 +356,7 @@ def predict(
     # ── Baca konfigurasi aktif ────────────────────────────────────────────────
     mode = get_setting("inference_mode") or "hugging"
     model_id = get_setting("model_id") or WASTE_MODEL_ID
+    hf_token = get_setting("hf_token") or ""
 
     logger.info(f"[Predict] Mode={mode} | Model={model_id} | Threshold={threshold}")
 
@@ -361,7 +369,7 @@ def predict(
         return _predict_gemini(image, api_key, threshold)
 
     # Mode "hugging" — coba HuggingFace Hub
-    result = _predict_hugging(image, model_id, threshold)
+    result = _predict_hugging(image, model_id, threshold, hf_token)
 
     # ── Auto-fallback ke Gemini jika HF Hub gagal ─────────────────────────────
     # Berguna ketika HuggingFace tidak dapat diakses di Streamlit Cloud

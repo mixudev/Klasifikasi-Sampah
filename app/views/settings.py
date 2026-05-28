@@ -165,6 +165,36 @@ def render() -> None:
         clear_model_cache()
         st.success(f"✅ Model ID diperbarui: `{new_model.strip()}`")
 
+    # ── HuggingFace Token untuk akses model private ──────────────────────────
+    st.caption("**Token Autentikasi** (opsional untuk model private):")
+    
+    current_hf_token = get_setting("hf_token") or ""
+    is_token_set = bool(current_hf_token.strip())
+    
+    new_hf_token = st.text_input(
+        "HuggingFace API Token",
+        value=current_hf_token,
+        type="password",
+        placeholder="Masukkan token HF Anda (hf_xxxxxxxxxxxxxxxxxxxx)",
+        help=(
+            "📝 Dapatkan token gratis di: [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)\n\n"
+            "**Kegunaan:**\n"
+            "- Akses model **private** yang Anda miliki\n"
+            "- Bypass rate limiting untuk model publik\n"
+            "- Akses model yang memerlukan autentikasi\n\n"
+            "**Keamanan:** Token disimpan terenkripsi di database lokal. "
+            "Gunakan token yang spesifik untuk repository tertentu saja."
+        ),
+    )
+    
+    if new_hf_token.strip() != current_hf_token.strip():
+        update_setting("hf_token", new_hf_token.strip())
+        clear_model_cache()  # Clear cache agar token baru digunakan
+        st.success("✅ HuggingFace token berhasil diperbarui.")
+    
+    if is_token_set:
+        st.caption("✅ Token HF sudah dikonfigurasi. Sistem dapat mengakses model private Anda.")
+
     st.markdown("---")
 
     # ═══════════════════════════════════════════════════════════════════════════

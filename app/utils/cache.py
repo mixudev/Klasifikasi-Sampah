@@ -32,6 +32,7 @@ DEFAULT_SETTINGS: dict = {
     "auto_save_history":    True,
     "inference_mode":       DEFAULT_INFERENCE_MODE,
     "gemini_api_key":       GEMINI_API_KEY,
+    "hf_token":             "",  # HuggingFace token untuk akses model private
 }
 
 DB_PATH = "waste_db.sqlite"

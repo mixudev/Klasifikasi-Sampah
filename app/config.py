@@ -10,8 +10,11 @@ APP_NAME = "WasteAI"
 APP_VERSION = "1.0.0"
 APP_TAGLINE = "Klasifikasi Sampah Cerdas Berbasis AI"
 
-# Masukkan Google Gemini API Key Anda di bawah ini agar sistem langsung aktif menggunakan Gemini
-GEMINI_API_KEY = "AIzaSyBrnRTwMuMCRrTKJgjkXGJ73p2OBQLrp5U"
+# ⚠️ SECURITY WARNING: JANGAN hardcode API Key di file ini!
+# Gunakan environment variables atau .streamlit/secrets.toml
+# Baca DEPLOYMENT.md untuk setup yang aman.
+import os
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 # ──────────────────────────────────────────
 # MODEL CONFIG

@@ -21,7 +21,51 @@
 
 ---
 
-## 🔍 Troubleshooting: "Model Loading Failed"
+## 🤗 HuggingFace Token Setup (Optional)
+
+### Untuk Mengakses Model Private atau Bypass Rate Limiting
+
+#### ✅ Opsi 1: Setup di Streamlit Cloud (Recommended)
+
+1. **Generate token di HuggingFace**
+   - Buka: https://huggingface.co/settings/tokens
+   - Klik "New token" → "Read" access → "Create token"
+   - Copy token: `hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
+
+2. **Setup Secrets di Streamlit Cloud**
+   - Buka deployment di https://share.streamlit.io/
+   - Klik ⚙️ → **Settings**
+   - Scroll ke **"Secrets"**
+   - Paste code ini:
+     ```toml
+     hf_token = "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     ```
+   - Klik **Save** → App akan auto-restart
+
+3. **Token langsung aktif** ✅
+   - Sistem akan otomatis menggunakan token untuk download model
+   - Bisa akses model private Anda
+   - Rate limit lebih tinggi (~1000 req/hari vs 30 req/hari)
+
+#### ✅ Opsi 2: Input via UI Settings (No Code)
+
+1. Buka aplikasi WasteAI
+2. Sidebar → **Pengaturan Sistem**
+3. Scroll ke **"Konfigurasi Model Hugging Face Hub"**
+4. Input token di **"HuggingFace API Token"**
+5. Token disimpan otomatis (encrypted di database)
+
+**Keuntungan:** Tidak perlu konfigurasi cloud, bisa di-update kapan saja tanpa redeploy.
+
+### 📖 Panduan Lengkap
+
+Baca **HF_TOKEN_GUIDE.md** untuk:
+- ✅ Cara generate & copy token
+- ✅ Security best practices
+- ✅ Troubleshooting token issues
+- ✅ Akses model private/restricted
+
+---
 
 ### Penyebab & Solusi
 
