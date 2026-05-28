@@ -18,9 +18,9 @@ from app.config import WASTE_MODEL_ID, HF_MODEL_ID
 
 # Model-model yang direkomendasikan dengan deskripsinya
 _RECOMMENDED_MODELS = {
-    "wayfarer130/garbage-classification-vit": "🗑️ Waste ViT — Model khusus sampah (ViT, ~350MB)",
-    "Sintong/TrashNetResNet18":               "⚡ TrashNet ResNet18 — Ringan & cepat (~45MB)",
-    "google/vit-base-patch16-224":            "🤖 Google ViT Base — Model generik ImageNet (~350MB)",
+    "wayfarer130/garbage-classification-vit": "Waste ViT",
+    "Sintong/TrashNetResNet18":               "TrashNet ResNet18",
+    "google/vit-base-patch16-224":            "Google ViT Base",
 }
 
 _SECTION_STYLE = (
@@ -63,8 +63,8 @@ def render() -> None:
     current_mode = get_setting("inference_mode") or "hugging"
 
     MODE_OPTIONS = {
-        "🤗 Hugging Face Hub  —  Model diunduh & dijalankan lokal (tanpa batas kuota)": "hugging",
-        "✨ Google Gemini AI  —  Multimodal, instan, tanpa download model": "gemini",
+        "Hugging Face Hub": "hugging",
+        "Google Gemini": "gemini",
     }
 
     # Pastikan index valid jika mode lama sudah dimigrasi

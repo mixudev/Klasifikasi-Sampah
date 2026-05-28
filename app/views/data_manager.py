@@ -143,7 +143,8 @@ def render() -> None:
 
             with col_edit_fields:
                 st.markdown("**Perbarui Data:**")
-                new_label = st.selectbox("Kategori Baru", WASTE_CLASSES, index=WASTE_CLASSES.index(current_record['label']))
+                safe_index = WASTE_CLASSES.index(current_record['label']) if current_record['label'] in WASTE_CLASSES else 0
+                new_label = st.selectbox("Kategori Baru", WASTE_CLASSES, index=safe_index)
                 new_conf = st.slider("Confidence Baru (%)", min_value=0.0, max_value=100.0, value=float(current_record['confidence']), step=0.1)
                 
                 if st.button("TERAPKAN PERUBAHAN", type="primary", use_container_width=True):

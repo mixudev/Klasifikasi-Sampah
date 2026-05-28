@@ -31,7 +31,4 @@ def alert_model_not_loaded() -> None:
 
 
 def alert_low_confidence(threshold_pct: float) -> None:
-    st.warning(
-        f"Confidence di bawah threshold ({threshold_pct:.0f}%). "
-        "Hasil mungkin kurang akurat — pastikan gambar jelas dan cukup cahaya."
-    )
+    pass  # Pesan confidence threshold tidak ditampilkan
